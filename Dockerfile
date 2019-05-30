@@ -2,11 +2,13 @@
 # License Apache 2.0 (https://www.apache.org/licenses/LICENSE-2.0.html).
 
 FROM golang:alpine
-MAINTAINER Dave Lasley <dave@laslabs.com>
+MAINTAINER Rémi Alvergnat <remi.alvergnat@gfi.fr>
 
 ENV CFSSL_CSR="csr_root_ca.json" \
     CFSSL_CONFIG="ca_root_config.json" \
     DB_CONFIG="db_config.json" \
+    DB_DISABLED="0" \
+    DB_DRIVER="sqlite3" \
     DB_ENVIRONMENT="production" \
     DB_INIT="1" \
     DB_DESTROY="0"
@@ -44,13 +46,15 @@ RUN apk add --no-cache --virtual .build-deps \
 	&& go build -o /usr/bin/mkbundle ./cmd/mkbundle \
 	&& go build -o /usr/bin/multirootca ./cmd/multirootca \
 # Install trusted certs
-	&& cp -R "${GOPATH}/src/github.com/cloudflare/cfssl/vendor/github.com/cloudflare/cfssl_trust" / \
+    && go get github.com/cloudflare/cfssl_trust/... \
+	&& cp -R "${GOPATH}/src/github.com/cloudflare/cfssl_trust" / \
 	&& ln -s /cfssl_trust /etc/cfssl/ \
 # Move database migrations to /opt
-    && mkdir /opt/ \
+    && mkdir -p /opt/ \
     && cp -R "${GOPATH}/src/github.com/cloudflare/cfssl/certdb/" /opt/ \
 # Install go.rice
     && set -x \
+    && cd "${GOPATH}/src/github.com/cloudflare/cfssl" \
 	&& go get github.com/GeertJohan/go.rice/rice \
     && rice embed-go -i=./cli/serve \
 # Create PKI directory
@@ -73,6 +77,8 @@ RUN apk add --no-cache --virtual .build-deps \
 	&& apk del .build-deps \
 	&& rm -rf "${GOPATH}/src"
 
+RUN apk add --update libcap && setcap 'cap_net_bind_service=+ep' $(which cfssl)
+
 # Switch from root user
 USER "cfssl:cfssl"
 
@@ -81,7 +87,7 @@ WORKDIR /etc/cfssl
 
 # Exose ports & volumes
 VOLUME ["/etc/cfssl", "/cfssl_trust"]
-EXPOSE 8080
+EXPOSE 80
 
 # Entrypoint & Command
 ENTRYPOINT ["/docker-entrypoint.sh"]
@@ -91,18 +97,4 @@ CMD ["cfssl", \
      "-address=0.0.0.0", \
      "-ca=/etc/cfssl/ca.pem", \
      "-ca-key=/etc/cfssl/ca-key.pem", \
-     "-port=8080"]
-
-# Metadata
-ARG BUILD_DATE
-ARG VCS_REF
-ARG VERSION
-LABEL org.label-schema.build-date=$BUILD_DATE \
-      org.label-schema.name="CFSSL - Alpine" \
-      org.label-schema.description="Provides a Docker image for CFSSL based on Alpine Linux." \
-      org.label-schema.url="https://laslabs.com/" \
-      org.label-schema.vcs-ref=$VCS_REF \
-      org.label-schema.vcs-url="https://github.com/LasLabs/docker-alpine-cfssl" \
-      org.label-schema.vendor="LasLabs Inc." \
-      org.label-schema.version=$VERSION \
-      org.label-schema.schema-version="1.0"
+     "-port=80"]
